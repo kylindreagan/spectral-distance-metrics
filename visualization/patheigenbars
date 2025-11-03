@@ -1,0 +1,38 @@
+import numpy as np
+import networkx as nx
+import matplotlib.pyplot as plt
+from scipy.linalg import eigh
+
+# Build path graph P_n
+n = 30
+G = nx.path_graph(n)
+
+# Combinatorial Laplacian
+L = nx.laplacian_matrix(G).toarray()
+
+# Compute eigenvalues/eigenvectors (symmetric -> use eigh)
+w, v = eigh(L)
+
+# Choose low-frequency (second smallest, index 1) and high-frequency (largest, index -1)
+low_idx = 1
+high_idx = -1
+
+low_mode = v[:, low_idx]
+high_mode = v[:, high_idx]
+
+# Plotting
+plt.figure(figsize=(8,4.5))
+x = np.arange(n)
+
+plt.plot(x, low_mode, marker='o', label=f'Low-frequency mode (eig #{low_idx}, λ={w[low_idx]:.4f})')
+plt.plot(x, high_mode, marker='s', label=f'High-frequency mode (eig #{n-1}, λ={w[-1]:.4f})')
+
+plt.axhline(0, linewidth=0.6, linestyle='--')
+plt.xlabel('Vertex index (along path)')
+plt.ylabel('Eigenvector value')
+plt.title('Low vs High Frequency Eigenmodes on Path Graph $P_{%d}$' % n)
+plt.legend()
+plt.grid(alpha=0.3)
+plt.tight_layout()
+
+plt.show()

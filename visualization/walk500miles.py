@@ -73,5 +73,9 @@ def update(frame):
     return nodes, edges_collection
 
 # Animate
-ani = FuncAnimation(fig, update, frames=200, interval=400, blit=False, repeat=False)
+anim = FuncAnimation(fig, update, frames=200, interval=400, blit=False, repeat=False)
 plt.show()
+
+# Save animation as GIF
+anim.save("other_random_walk.gif", writer="pillow", fps=10)
+print("GIF saved as other_random_walk.gif")

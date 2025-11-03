@@ -102,3 +102,7 @@ def update(frame):
 
 anim = animation.FuncAnimation(fig, update, frames=80, interval=120, blit=False)
 plt.show()
+
+# Save animation as GIF
+anim.save("paley_random_walk.gif", writer="pillow", fps=10)
+print("GIF saved as paley_random_walk.gif")
