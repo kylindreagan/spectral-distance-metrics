@@ -1,12 +1,34 @@
-import networkx as nx
 import numpy as np
+import networkx as nx
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from matplotlib.animation import FuncAnimation
+from matplotlib import animation, cm
+from matplotlib.colors import Normalize
 
-# Create a simple connected graph (you can replace this with a Paley or any other)
-G = nx.erdos_renyi_graph(10, 0.3, seed=42)
-pos = nx.spring_layout(G, seed=42)
+
+# Paley graph parameters
+p = 17  # prime congruent to 1 mod 4
+nodes = list(range(p))
+
+# quadratic residues mod p
+residues = set((i*i) % p for i in range(1, p))
+if 0 in residues:
+    residues.remove(0)
+
+G = nx.Graph()
+G.add_nodes_from(nodes)
+for i in nodes:
+    for j in nodes:
+        if i < j:
+            diff = (i - j) % p
+            if diff in residues:
+                G.add_edge(i, j)
+
+pos = nx.circular_layout(G, scale=2.0)
+A = nx.to_numpy_array(G, nodelist=nodes)
+deg = A.sum(axis=1)
+D_inv = np.diag(1.0 / deg)
+W = A @ D_inv
+tildeW = 0.5 * np.eye(p) + 0.5 * W
 
 # Transition probabilities
 P = {}
@@ -21,6 +43,9 @@ visited = np.zeros(len(G.nodes()))
 
 # Color map
 cmap = plt.colormaps["plasma"]
+norm = Normalize(vmin=0, vmax=1)
+sm = cm.ScalarMappable(cmap=cmap, norm=norm)
+sm.set_array([])
 
 # Set up figure
 fig, ax = plt.subplots(figsize=(6, 6))
@@ -33,6 +58,9 @@ labels = nx.draw_networkx_labels(G, pos=pos, ax=ax, font_color="white")
 
 # Convert edges to list for easy reference
 edges = list(G.edges())
+
+cbar = plt.colorbar(sm, ax=ax, fraction=0.046, pad=0.04)
+cbar.set_label('Visit Probability', rotation=270, labelpad=15)
 
 def update(frame):
     global current_node
@@ -48,8 +76,8 @@ def update(frame):
     visited[next_node] += 1
 
     # Compute probabilities (normalize visit counts)
-    probs = visited / np.sum(visited)
-    colors = [cmap(p) for p in probs]
+    probs = visited / (np.sum(visited) + 1e-8) 
+    colors = [cmap(norm(p)) for p in probs]
     colors[current_node] = 'yellow'
     nodes.set_color(colors)
 
@@ -69,9 +97,8 @@ def update(frame):
     # Move walker
     current_node = next_node
 
-    ax.set_title(f"Random Walk on Graph— Step {frame}", fontsize=14)
+    ax.set_title(f"Lazy Random Walk on Paley Graph (p={p}) — Step {frame}", fontsize=12)
     return nodes, edges_collection
 
-# Animate
-ani = FuncAnimation(fig, update, frames=200, interval=400, blit=False, repeat=False)
+anim = animation.FuncAnimation(fig, update, frames=80, interval=120, blit=False)
 plt.show()
