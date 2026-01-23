@@ -1,1 +1,2 @@
-# Spectral-Graph-Theory
+# Spectral-Shape-Analysis
+Senior study topic
