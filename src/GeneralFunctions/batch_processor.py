@@ -1,6 +1,6 @@
 import os
 from src.GeneralFunctions.shape_reader import read_mesh_file
-
+from tqdm import tqdm
 
 def load_all_meshes(folder_path, supported_extensions=['.off', '.ply', '.obj', '.stl', '.mesh']):
     meshes = {}
@@ -43,4 +43,21 @@ def load_all_meshes(folder_path, supported_extensions=['.off', '.ply', '.obj', '
 
     print(f"Successfully loaded {len(meshes)} meshes")
     return meshes
-        
+
+def load_meshes_with_progress(folder_path):
+    import glob
+
+    off_files = glob.glob(os.path.join(folder_path, "**/*.off"), recursive=True)
+    ply_files = glob.glob(os.path.join(folder_path, "**/*.ply"), recursive=True)
+    all_files = off_files + ply_files
+    
+    meshes = {}
+
+    print(f"Found {len(all_files)} mesh files")
+    
+    for filepath in tqdm(all_files, desc="Loading meshes"):
+        V, F, name = read_mesh_file(filepath)
+        if V is not None and F is not None:
+            meshes[name] = {'V': V, 'F': F}
+    
+    return meshes
