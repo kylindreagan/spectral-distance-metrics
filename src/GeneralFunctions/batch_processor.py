@@ -1,6 +1,7 @@
 import os
 from src.GeneralFunctions.shape_reader import read_mesh_file
 from tqdm import tqdm
+import pickle
 
 def load_all_meshes(folder_path, supported_extensions=['.off', '.ply', '.obj', '.stl', '.mesh']):
     meshes = {}
@@ -59,5 +60,25 @@ def load_meshes_with_progress(folder_path):
         V, F, name = read_mesh_file(filepath)
         if V is not None and F is not None:
             meshes[name] = {'V': V, 'F': F}
+    
+    return meshes
+
+def load_meshes_cached(folder_path, cache_file="meshes_cache.pkl", force_reload=False):
+    # Check if cache exists and is valid
+    if not force_reload and os.path.exists(cache_file):
+        # Check if cache is newer than folder modification time
+        cache_time = os.path.getmtime(cache_file)
+        folder_time = os.path.getmtime(folder_path)
+        
+        if cache_time > folder_time:
+            print("Loading from cache...")
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+    
+    print("Loading from disk...")
+    meshes = load_all_meshes(folder_path)
+
+    with open(cache_file, 'wb') as f:
+        pickle.dump(meshes, f)
     
     return meshes
