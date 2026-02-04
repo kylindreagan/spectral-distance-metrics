@@ -1,12 +1,16 @@
 import igl
 import numpy as np
 from scipy.sparse.linalg import eigsh
+import trimesh
 
-def laplace_beltrami_eigenvalues_mesh(mesh, k=200, return_eigenvectors=False, mass_matrix_type='voronoi'):
+def laplace_beltrami_eigenvalues(mesh, k=200, return_eigenvectors=False, mass_matrix_type='voronoi'):
     #k = number of eigenvalues (Should be min ~50), 
     if isinstance(mesh, dict):
         V = mesh['V']  # n x 3 array
         F = mesh['F']  # m x 3 array
+    elif isinstance(mesh, trimesh.Trimesh):
+        V = mesh.vertices
+        F = mesh.faces
     else:
         V, F = mesh  # Assume tuple
     
@@ -48,8 +52,8 @@ def laplace_beltrami_eigenvalues_mesh(mesh, k=200, return_eigenvectors=False, ma
         return eigenvalues, eigenvectors
     return eigenvalues
 
-def laplace_beltrami_eigenvalues(V, F, k=200, return_eigenvectors=False, mass_matrix_type='voronoi'):
-    
+def laplace_beltrami_eigenvalues_vectors(V, F, k=200, return_eigenvectors=False, mass_matrix_type='voronoi'):
+    #k = number of eigenvalues (Should be min ~50), 
     n_vertices = V.shape[0]
     
     L = igl.cotmatrix(V, F) #Sparse cotangent Laplacian
@@ -73,7 +77,7 @@ def laplace_beltrami_eigenvalues(V, F, k=200, return_eigenvectors=False, mass_ma
         A=-L, 
         M=M, 
         k=num_eigenvalues,
-        sigma=None,
+        sigma=None, 
         which='SM',  # Smallest magnitude
         maxiter=5000,
         tol=1e-6
