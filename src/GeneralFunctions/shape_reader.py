@@ -7,15 +7,15 @@ def read_mesh_file(filepath):
     
     try:
         if ext == '.off':
-            V, F = igl.read_off(filepath)
+            V, F = igl.readOFF(filepath)
         elif ext == '.ply':
-            V, F = igl.read_ply(filepath)
+            V, F = igl.read_triangle_mesh(filepath)
         elif ext == '.obj':
-            V, F = igl.read_obj(filepath)
+            V, F = igl.readOBJ(filepath)
         elif ext == '.stl':
             V, F = igl.read_triangle_mesh(filepath)
         elif ext == '.mesh':
-            V, F = igl.read_mesh(filepath)
+            V, F = igl.readMESH(filepath)
         else:
             raise ValueError(f"Unsupported file format: {ext}")
         

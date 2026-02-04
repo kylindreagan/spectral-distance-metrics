@@ -1,7 +1,10 @@
 import os
-from src.GeneralFunctions.shape_reader import read_mesh_file
+from GeneralFunctions.shape_reader import read_mesh_file
 from tqdm import tqdm
 import pickle
+import multiprocessing as mp
+import os
+import glob
 
 def load_all_meshes(folder_path, supported_extensions=['.off', '.ply', '.obj', '.stl', '.mesh']):
     meshes = {}
