@@ -1,1 +1,1 @@
-from src.ShapeDNA.laplaceBeltramiShape import laplace_beltrami_eigenvalues
+from laplaceBeltramiShape import laplace_beltrami_eigenvalues
