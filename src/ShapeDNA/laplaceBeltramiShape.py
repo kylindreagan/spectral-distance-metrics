@@ -76,7 +76,7 @@ def laplace_beltrami_eigenvalues_vectors(V, F, k=200, return_eigenvectors=False,
 
     try:
         eigenvalues, eigenvectors = eigsh(
-            A=L, 
+            A=-L, 
             M=M, 
             k=k,
             which='SM',  # Smallest magnitude
