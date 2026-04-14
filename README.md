@@ -5,7 +5,7 @@
 This repository contains the reference implementation and supporting code for the Senior Study thesis:
 
 > **"Eigenspace Perturbations and Spectral Distance Metrics in Non‑Rigid Shape Retrieval"**  
-> *Kyind Reagan – Maryville College, 2026*
+> *Kylind Reagan – Maryville College, 2026*
 
 The work surveys, implements, and evaluates spectral shape descriptors based on the Laplace–Beltrami operator and its discretizations. It includes:
 - Computation of Laplace–Beltrami eigenpairs on triangle meshes  
