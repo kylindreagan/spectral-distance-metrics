@@ -7,7 +7,7 @@ def read_mesh_file(filepath):
     
     try:
         if ext == '.off':
-            V, F = igl.readOFF(filepath)
+            V, F = igl.read_triangle_mesh(filepath)
         elif ext == '.ply':
             V, F = igl.read_triangle_mesh(filepath)
         elif ext == '.obj':

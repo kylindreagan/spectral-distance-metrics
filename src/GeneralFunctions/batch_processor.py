@@ -1,10 +1,8 @@
 import os
-from GeneralFunctions.shape_reader import read_mesh_file
+from shape_reader import read_mesh_file
 from tqdm import tqdm
-import pickle
-import multiprocessing as mp
 import os
-import glob
+import numpy as np
 
 def load_all_meshes(folder_path, supported_extensions=['.off', '.ply', '.obj', '.stl', '.mesh']):
     meshes = {}
@@ -66,22 +64,38 @@ def load_meshes_with_progress(folder_path):
     
     return meshes
 
-def load_meshes_cached(folder_path, cache_file="meshes_cache.pkl", force_reload=False):
-    # Check if cache exists and is valid
-    if not force_reload and os.path.exists(cache_file):
-        # Check if cache is newer than folder modification time
-        cache_time = os.path.getmtime(cache_file)
+def load_meshes_cached(folder_path, cache_file="meshes_cache.npz", force_reload=False):
+    npz_file = cache_file.replace('.pkl', '.npz')
+    
+    if not force_reload and os.path.exists(npz_file):
+        cache_time = os.path.getmtime(npz_file)
         folder_time = os.path.getmtime(folder_path)
         
         if cache_time > folder_time:
-            print("Loading from cache...")
-            with open(cache_file, 'rb') as f:
-                return pickle.load(f)
-    
-    print("Loading from disk...")
-    meshes = load_all_meshes(folder_path)
+            print("Loading meshes from cache...")
+            import time
+            t0 = time.time()
+            data = np.load(npz_file, allow_pickle=False)
+            meshes = {}
+            # Keys are stored as "name__V" and "name__F"
+            names = set(k.rsplit('__', 1)[0] for k in data.files)
+            for name in names:
+                meshes[name] = {
+                    'V': data[f'{name}__V'],
+                    'F': data[f'{name}__F'],
+                }
+            print(f"Loaded {len(meshes)} meshes in {time.time() - t0:.2f}s")
+            return meshes
 
-    with open(cache_file, 'wb') as f:
-        pickle.dump(meshes, f)
+    print("Loading meshes from disk...")
+    meshes = load_all_meshes(folder_path)
     
+    # Save as npz
+    arrays = {}
+    for name, mesh in meshes.items():
+        safe = name.replace('/', '_').replace('\\', '_')
+        arrays[f'{safe}__V'] = mesh['V']
+        arrays[f'{safe}__F'] = mesh['F']
+    np.savez(npz_file, **arrays)
+    print(f"Saved mesh cache to {npz_file}")
     return meshes

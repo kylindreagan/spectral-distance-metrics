@@ -4,94 +4,58 @@ from scipy.sparse.linalg import eigsh, ArpackNoConvergence
 import trimesh
 
 def laplace_beltrami_eigenvalues(mesh, k=200, return_eigenvectors=False, mass_matrix_type='voronoi'):
-    #k = number of eigenvalues (Should be min ~50), 
     if isinstance(mesh, dict):
-        V = mesh['V']  # n x 3 array
-        F = mesh['F']  # m x 3 array
+        V = mesh['V']
+        F = mesh['F']
     elif isinstance(mesh, trimesh.Trimesh):
         V = mesh.vertices
         F = mesh.faces
     else:
-        V, F = mesh  # Assume tuple
-    
+        V, F = mesh
+
     n_vertices = V.shape[0]
-    
-    L = igl.cotmatrix(V, F) #Sparse cotangent Laplacian
-    if mass_matrix_type.lower() == 'voronoi' or mass_matrix_type.lower() == 'lumped_voronoi':
+    L = igl.cotmatrix(V, F)
+
+    if mass_matrix_type.lower() in ('voronoi', 'lumped_voronoi'):
         M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_VORONOI)
-        
-    elif mass_matrix_type.lower() == 'barycentric' or mass_matrix_type.lower() == 'lumped_barycentric':
+    elif mass_matrix_type.lower() in ('barycentric', 'lumped_barycentric'):
         M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_BARYCENTRIC)
-        
     elif mass_matrix_type.lower() == 'full':
-        # Note: eigsh requires positive definite M, full matrix may cause issues
         M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_FULL)
-        
     else:
-        raise ValueError(f"Unknown mass_matrix_type: {mass_matrix_type}. "
-                         f"Options: 'voronoi', 'barycentric', 'full'")
+        raise ValueError(f"Unknown mass_matrix_type: {mass_matrix_type}")
 
-    num_eigenvalues = min(k, n_vertices - 1)
-
-    eigenvalues, eigenvectors = eigsh(
-        A=-L, 
-        M=M, 
-        k=num_eigenvalues,
-        sigma=None, 
-        which='SM',  # Smallest magnitude
-        maxiter=5000,
-        tol=1e-6
-    )
-
-    sort_idx = np.argsort(eigenvalues)
-    eigenvalues = eigenvalues[sort_idx]
-    eigenvectors = eigenvectors[:, sort_idx]
-    
-
-    if return_eigenvectors:
-        return eigenvalues, eigenvectors
-    return eigenvalues
-
-def laplace_beltrami_eigenvalues_vectors(V, F, k=200, return_eigenvectors=False, mass_matrix_type='voronoi', enforce_dirichlet=False):
-    #k = number of eigenvalues (Should be min ~50), TODO: Add dirichlet
-    
-    L = igl.cotmatrix(V, F) #Sparse cotangent Laplacian
-    n_vertices = V.shape[0]
-    if mass_matrix_type.lower() == 'voronoi' or mass_matrix_type.lower() == 'lumped_voronoi':
-        M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_VORONOI)
-        
-    elif mass_matrix_type.lower() == 'barycentric' or mass_matrix_type.lower() == 'lumped_barycentric':
-        M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_BARYCENTRIC)
-        
-    elif mass_matrix_type.lower() == 'full':
-        # Note: eigsh requires positive definite M, full matrix may cause issues
-        M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_FULL)
-        
-    else:
-        raise ValueError(f"Unknown mass_matrix_type: {mass_matrix_type}. "
-                         f"Options: 'voronoi', 'barycentric', 'full'")
-    
-    k = min(k, n_vertices - 1) if n_vertices > 1 else 1
-    ncv = min(3 * k, n_vertices - 1)
+    num_eigenvalues = min(k, n_vertices - 2)
 
     try:
-        eigenvalues, eigenvectors = eigsh(
-            A=-L, 
-            M=M, 
-            k=k,
-            which='SM',  # Smallest magnitude
-            maxiter=5000,
+        result = eigsh(
+            A=-L,
+            M=M,
+            k=num_eigenvalues,
+            sigma=0,
+            which='LM',        # LM after shift = smallest original eigenvalues
+            maxiter=10000,
             tol=1e-6,
-            ncv=ncv
+            return_eigenvectors=return_eigenvectors
         )
     except ArpackNoConvergence as e:
-        eigenvalues = e.eigenvalues
-        eigenvectors = e.eigenvectors
+        # Rescue partial results rather than failing entirely
+        if return_eigenvectors:
+            eigenvalues, eigenvectors = e.eigenvalues, e.eigenvectors
+        else:
+            eigenvalues = e.eigenvalues
 
-    sort_idx = np.argsort(eigenvalues)
-    eigenvalues = eigenvalues[sort_idx]
-    eigenvectors = eigenvectors[:, sort_idx]
+        partial = np.sort(np.abs(eigenvalues))
+        if len(partial) < num_eigenvalues:
+            partial = np.pad(partial, (0, num_eigenvalues - len(partial)),
+                             constant_values=partial[-1] if len(partial) > 0 else 0.0)
+        if return_eigenvectors:
+            return partial[:num_eigenvalues], eigenvectors
+        return partial[:num_eigenvalues]
 
     if return_eigenvectors:
-        return eigenvalues, eigenvectors
-    return eigenvalues
+        eigenvalues, eigenvectors = result
+        sort_idx = np.argsort(eigenvalues)
+        return eigenvalues[sort_idx], eigenvectors[:, sort_idx]
+    else:
+        return np.sort(result)

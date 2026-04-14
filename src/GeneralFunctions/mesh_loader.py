@@ -1,4 +1,4 @@
-from GeneralFunctions.shape_reader import read_mesh_file
+from shape_reader import read_mesh_file
 import os
 import numpy as np
 import igl
