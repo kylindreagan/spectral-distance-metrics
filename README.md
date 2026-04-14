@@ -15,7 +15,7 @@ The work surveys, implements, and evaluates spectral shape descriptors based on 
 - Visualisations using t‑SNE and spectral clustering
 
 # Obtaining the SHREC 2011 dataset
-The experiments rely on the **SHREC 2011 Non‑rigid 3D Shape Retrieval benchmark.** You can download it from the [SHREC website](https://www.shrec.net/) or from the [original teack page](https://www.nist.gov/itl). Place the extracted meshes in data/SHREC2011 and ensure the directory structure matches the expected layout (flat). Visualizations all used ind_visual_showcase.py on T280.off and T593.off.
+The experiments rely on the **SHREC 2011 Non‑rigid 3D Shape Retrieval benchmark.** You can download it from the [SHREC website](https://www.shrec.net/) or from the [original track page](https://www.nist.gov/itl). Place the extracted meshes in data/SHREC2011 and ensure the directory structure matches the expected layout (flat). Visualizations all used ind_visual_showcase.py on T280.off and T593.off.
 
 # Core Functions
 
