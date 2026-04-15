@@ -40,7 +40,13 @@ hks, times = compute_hks(evals, evecs, n_times=50)
 
 ## Scale Invariant Heat Kernel Signature (SIHKS)
 ```python
-from src.HKS.scaleInvariantHKS import compute_scale_invariant_hks
+from src.HKS.scaleInvariantHKS import compute_sihks_norm
+
+sihks, scaled_times = compute_scale_invariant_hks(evals, evecs, n_times=50)
+```
+
+```python
+from src.HKS.sihkseignorm import compute_scale_invariant_hks
 
 sihks, scaled_times = compute_scale_invariant_hks(evals, evecs, n_times=50)
 ```
