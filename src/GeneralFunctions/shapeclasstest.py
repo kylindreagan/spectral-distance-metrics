@@ -26,13 +26,14 @@ from ShapeDNA.laplaceBeltramiShape import laplace_beltrami_eigenvalues
 from HKS.heatKernelSignatures import compute_hks
 from WKS.waveKernelSignatures import compute_wks
 from HKS.scaleInvariantHKS import compute_scale_invariant_hks
+from HKS.sihkseignorm import compute_sihks_norm
 from modern.averageMixingKernelSignature import compute_amks
 
 # ── config ─────────────────────────────────────────────────────────────────────
 DATA_DIR       = "././data/SHREC2011/"
 MESH_CACHE     = "shrec_meshes_shrec11.pkl"
 GT_FILE        = "././data/SHREC2011/test.cla"
-K_EVALS        = 100
+K_EVALS        = 200
 OUT_DIR        = "benchmark_outputs"
 THUMB_SIZE     = 120      # px per thumbnail in scatter
 TSNE_PERP      = 40
@@ -385,6 +386,12 @@ def pipeline_sihks(mesh):
     sihks, _ = compute_scale_invariant_hks(evals, evecs, n_times=20)
     return sihks
 
+def pipeline_sihks_norm(mesh):
+    evals, evecs = get_evals_evecs(mesh)
+    evals = np.abs(evals)
+    sihks, _ = compute_sihks_norm(evals, evecs, n_times=20)
+    return sihks
+
 def pipeline_wks(mesh):
     evals, evecs = get_evals_evecs(mesh)
     evals = np.abs(evals)
@@ -403,6 +410,7 @@ PIPELINES = {
     'ShapeDNA': pipeline_shapedna,
     'HKS':      pipeline_hks,
     'SIHKS':    pipeline_sihks,
+    'SIHKSnorm':    pipeline_sihks_norm,
     'WKS':      pipeline_wks,
     #'AMKS':     pipeline_amks,
 }

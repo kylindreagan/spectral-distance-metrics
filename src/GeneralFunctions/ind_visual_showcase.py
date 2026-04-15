@@ -19,6 +19,7 @@ Outputs (in --outdir, default = current directory):
     laplace.png
     hks.png
     sihks.png
+    sihks_norm.png (RGB from 3 time points)
     wks.png
     summary.png
 
@@ -37,7 +38,7 @@ Extra options:
 import argparse
 import os
 import textwrap
-
+import sys
 import numpy as np
 import trimesh
 import igl
@@ -95,22 +96,36 @@ DESCRIPTORS = {
             "Cool tones → fast diffusion (sharp features, tips)."
         ),
     },
+    
     "sihks": {
         "cmap":    "viridis",
         "label":   "Scale-Invariant HKS  (SI-HKS)",
         "short":   "SI-HKS",
-        "formula": "SI-HKS = HKS(λ̂ₖ, t) / Σ HKS   where  λ̂ₖ = λₖ/λ₁",
+        "formula": "SI-HKS = mean_{f} |FFT(HKS(t))| / DC   [freqs 1..16]",
+        "caption": (
+            "HKS spectrum normalised by its DC component, removing scale dependency.\n"
+            "Each vertex is represented by the mean magnitude across 16 low frequencies.\n"
+            "Invariant to global scaling; highlights intrinsic curvature."
+        ),
+    },
+    
+    "sihks_norm": {
+        "cmap":    None,   # RGB visualisation – no colormap
+        "label":   "Scale-Invariant HKS  (SI-HKS, eigenvalue normalised)",
+        "short":   "SI-HKS-norm",
+        "formula": "SI-HKS(t) = HKS(λ̂ₖ, t) / Σ HKS   where  λ̂ₖ = λₖ/λ₁\nRGB = first 3 time points",
         "caption": (
             "HKS normalised by λ₁ and row-sum, removing scale dependency.\n"
-            "Comparable across meshes of different physical sizes.\n"
-            "Highlights intrinsic curvature independently of scale."
+            "Each vertex's time series is mapped to RGB using the first 3 time points.\n"
+            "Colour variation reveals intrinsic curvature changes over diffusion time."
         ),
+        "rgb": True,   # special flag
     },
     "wks": {
         "cmap":    "plasma",
         "label":   "Wave Kernel Signature  (WKS)",
         "short":   "WKS",
-        "formula": "WKS(x,e) = Σ wₖ(e) φₖ(x)²   wₖ ∝ exp(-(e-log λₖ)²/2σ²)",
+        "formula": "WKS(x,e) = Σ wₖ(e) φₖ(x)²   wₖ ∝ exp(-(e-log λₖ)²/2σ²)\n[mean over energies]",
         "caption": (
             "Colour encodes quantum particle localisation probability.\n"
             "Sharper frequency discrimination than HKS.\n"
@@ -128,73 +143,75 @@ VIEW_PRESETS = {
 }
 
 # ── spectral math ──────────────────────────────────────────────────────────────
-def _laplace_eigenpairs(V, F, k):
-    n = V.shape[0]
-    L = igl.cotmatrix(V, F)
-    M = igl.massmatrix(V, F, igl.MASSMATRIX_TYPE_VORONOI)
-    k_eff = min(k, n - 2)
-    try:
-        evals, evecs = eigsh(
-            A=-L, M=M, k=k_eff, sigma=0, which="LM",
-            maxiter=10_000, tol=1e-6, return_eigenvectors=True,
-        )
-    except ArpackNoConvergence as err:
-        evals, evecs = err.eigenvalues, err.eigenvectors
-    idx = np.argsort(evals)
-    return evals[idx], evecs[:, idx]
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+# Import your actual descriptor functions
+from ShapeDNA.laplaceBeltramiShape import laplace_beltrami_eigenvalues
+from HKS.heatKernelSignatures import compute_hks
+from WKS.waveKernelSignatures import compute_wks
+from HKS.scaleInvariantHKS import compute_scale_invariant_hks
+from HKS.sihkseignorm import compute_sihks_norm
 
 
-def _hks(evals, evecs, n_times=50):
-    evals = np.maximum(evals, 1e-12)
-    t_min = 4 * np.log(10) / evals[-1]
-    t_max = 4 * np.log(10) / evals[1]
-    times = np.logspace(np.log10(t_min), np.log10(t_max), n_times)
-    return ((evecs ** 2) @ np.exp(-np.outer(evals, times))).mean(1)
+# ── helper to ensure 1D descriptor (for non‑RGB descriptors) ─────────────────
+def _to_1d(scalar):
+    """If scalar is 2D (n_vertices × n_features), reduce by mean along features."""
+    if scalar is None:
+        return None
+    if isinstance(scalar, tuple):
+        scalar = scalar[0]
+    if hasattr(scalar, 'ndim') and scalar.ndim == 2:
+        scalar = scalar.mean(axis=1)
+    return scalar
 
 
-def _sihks(evals, evecs, n_times=50):
-    evals = np.maximum(evals, 1e-12)
-    lam1  = evals[1]
-    ev_n  = evals / lam1
-    t_min = 4 * np.log(10) / ev_n[-1]
-    t_max = 4 * np.log(10) / ev_n[1]
-    times = np.logspace(np.log10(t_min), np.log10(t_max), n_times)
-    hks   = (evecs ** 2) @ np.exp(-np.outer(ev_n, times))
-    return (hks / np.sum(hks, axis=1, keepdims=True)).mean(1)
-
-
-def _wks(evals, evecs, n_energies=100, sigma_factor=6.0):
-    evals    = np.maximum(evals, 1e-12)
-    log_e    = np.log(evals)
-    energies = np.linspace(log_e[1], log_e[-1], n_energies)
-    sigma    = (energies[1] - energies[0]) * sigma_factor
-    phi_sq   = evecs ** 2
-    wks      = np.zeros(evecs.shape[0])
-    for e in energies:
-        w = np.exp(-(e - log_e) ** 2 / (2 * sigma ** 2))
-        w /= w.sum()
-        wks += phi_sq @ w
-    return wks / n_energies
-
-
-# ── rendering helper ───────────────────────────────────────────────────────────
+# ── rendering helper (supports vertex colours directly) ───────────────────────
 def _normalise_verts(V):
     ctr = (V.max(0) + V.min(0)) / 2
     scl = (V.max(0) - V.min(0)).max()
     return (V - ctr) / (scl + 1e-12)
 
 
-def _render_mesh(ax, V, F, scalar, cmap_name, elev, azim,
-                 vmin=None, vmax=None):
-    """Draw a depth-sorted coloured mesh on a 3-D axis.  Returns (norm, cmap).
-
-    Uses percentile-based colour limits (2nd-98th) to prevent outlier vertices
-    from collapsing the entire colormap to one hue.
+def _render_mesh(ax, V, F, scalar=None, cmap_name=None, elev=20, azim=-60,
+                 vmin=None, vmax=None, vertex_colors=None):
     """
-    Vn   = _normalise_verts(V)
-    cmap = plt.get_cmap(cmap_name)
+    Draw a depth-sorted coloured mesh.
+    If vertex_colors is provided (N×3 RGB), use those directly.
+    Otherwise, use scalar + colormap.
+    """
+    Vn = _normalise_verts(V)
+    tris = Vn[F]
+    order = np.argsort(tris[:, :, 2].mean(1))
 
-    # Percentile clipping so outliers don't flatten the colour range.
+    if vertex_colors is not None:
+        # Use per‑vertex RGB colours
+        vcols = vertex_colors
+        if vcols.max() <= 1.0:
+            vcols = np.clip(vcols, 0, 1)
+        else:
+            vcols = vcols / 255.0
+        fcols = vcols[F].mean(1)
+        poly = Poly3DCollection(
+            tris[order],
+            facecolors=fcols[order],
+            edgecolors="none",
+            linewidths=0,
+            antialiased=True,
+        )
+        ax.add_collection3d(poly)
+        lim = 0.68
+        ax.set_xlim(-lim, lim); ax.set_ylim(-lim, lim); ax.set_zlim(-lim, lim)
+        ax.set_box_aspect([1, 1, 1])
+        ax.view_init(elev=elev, azim=azim)
+        ax.set_axis_off()
+        ax.set_facecolor(BG)
+        ax.patch.set_alpha(0)
+        return None, None   # no norm/cmap for RGB
+
+    # Otherwise, scalar + colormap
+    if scalar is None:
+        raise ValueError("Either vertex_colors or scalar must be provided")
+    cmap = plt.get_cmap(cmap_name)
     if vmin is None:
         vmin = np.percentile(scalar, 2)
     if vmax is None:
@@ -202,12 +219,9 @@ def _render_mesh(ax, V, F, scalar, cmap_name, elev, azim,
     if np.isclose(vmin, vmax):
         vmin, vmax = scalar.min(), scalar.max() + 1e-12
 
-    norm  = Normalize(vmin=vmin, vmax=vmax)
+    norm = Normalize(vmin=vmin, vmax=vmax)
     vcols = cmap(norm(scalar))
     fcols = vcols[F].mean(1)
-    tris  = Vn[F]
-    order = np.argsort(tris[:, :, 2].mean(1))
-
     poly = Poly3DCollection(
         tris[order],
         facecolors=fcols[order],
@@ -247,6 +261,8 @@ def _add_footer(fig, mesh_names, n_vs, n_fs, y=0.022):
 
 
 def _add_colourbar(fig, norm, cmap_name, rect=(0.905, 0.22, 0.022, 0.64)):
+    if cmap_name is None:
+        return
     sm = ScalarMappable(cmap=plt.get_cmap(cmap_name), norm=norm)
     sm.set_array([])
     cbar_ax = fig.add_axes(rect)
@@ -258,14 +274,8 @@ def _add_colourbar(fig, norm, cmap_name, rect=(0.905, 0.22, 0.022, 0.64)):
 
 
 # ── per-descriptor figure ──────────────────────────────────────────────────────
-# ───────────────────────────────
-# Single mesh:  [ view1 | view2 | … ] 
-#
-# Two meshes:   [ Mesh A: view1 | view2 | … || Mesh B: view1 | view2 | … ]
-#               A thin VERTICAL separator is drawn between the two mesh groups.
-#
 def save_descriptor_figure(
-    meshes,           # list of (V, F, scalar) 1 or 2 entries
+    meshes,           # list of (V, F, data) where data is either 1D scalar or 2D (n,3) RGB
     meta,             # DESCRIPTORS entry
     mesh_names,       # list of str
     views,            # [(view_name, (elev, azim)), …]
@@ -274,23 +284,26 @@ def save_descriptor_figure(
 ):
     n_mesh  = len(meshes)
     n_views = len(views)
+    is_rgb = meta.get("rgb", False)
 
-    # Share percentile-clipped colour range across both meshes.
-    all_scalars = np.concatenate([s for _, _, s in meshes])
-    g_vmin = np.percentile(all_scalars, 2)
-    g_vmax = np.percentile(all_scalars, 98)
-    if np.isclose(g_vmin, g_vmax):
-        g_vmin, g_vmax = all_scalars.min(), all_scalars.max() + 1e-12
+    # For scalar descriptors, compute global colour limits across all meshes
+    if not is_rgb:
+        all_scalars = np.concatenate([s for _, _, s in meshes])
+        g_vmin = np.percentile(all_scalars, 2)
+        g_vmax = np.percentile(all_scalars, 98)
+        if np.isclose(g_vmin, g_vmax):
+            g_vmin, g_vmax = all_scalars.min(), all_scalars.max() + 1e-12
+    else:
+        g_vmin = g_vmax = None   # not used
 
     # ── figure geometry ────────────────────────────────────────────────────────
     panel_w_in = 4.5
     panel_h_in = 4.5
-    cbar_w_in  = 1.2   # inches reserved on the right for the colourbar
+    cbar_w_in  = 1.2 if not is_rgb else 0.0   # no colourbar for RGB
 
-    # Total panels = n_mesh groups × n_views each, all in ONE row.
     n_total_cols = n_mesh * n_views
     fig_w = panel_w_in * n_total_cols + cbar_w_in
-    fig_h = panel_h_in + 1.8   # fixed height: one row + header/footer
+    fig_h = panel_h_in + 1.8
 
     fig = plt.figure(figsize=(fig_w, fig_h), facecolor=BG)
 
@@ -299,23 +312,22 @@ def save_descriptor_figure(
     note_frac   = 0.06 if n_mesh > 1 else 0.0
     panel_area  = 1.0 - header_frac - footer_frac - note_frac
 
-    cbar_frac  = cbar_w_in / fig_w
-    plot_right = 1.0 - cbar_frac - 0.01
+    plot_right = 1.0 - (cbar_w_in / fig_w) - 0.01 if not is_rgb else 0.99
     left_pad   = 0.01
-    # Width fraction of a single panel (all panels share one row)
     col_w      = (plot_right - left_pad) / n_total_cols
     row_bottom = footer_frac + note_frac
-    row_h_frac = panel_area                  # single row takes all panel area
+    row_h_frac = panel_area
 
     _add_header(fig, meta, y_title=0.975, y_formula=0.920)
 
     norm = None
-    for m_idx, (V, F, scalar) in enumerate(meshes):
+    for m_idx, (V, F, data) in enumerate(meshes):
         accent_color = ACCENT if (n_mesh == 1 or m_idx == 0) else ACCENT2
         mesh_label   = chr(65 + m_idx) if n_mesh > 1 else None
 
+        # For RGB descriptors, data is already vertex colours (N×3)
+        # For scalar, data is 1D array
         for v_idx, (vname, (elev, azim)) in enumerate(views):
-            # Global column index for this panel
             col_idx = m_idx * n_views + v_idx
             left    = left_pad + col_idx * col_w
 
@@ -324,18 +336,24 @@ def save_descriptor_figure(
                  col_w - 0.010, row_h_frac - 0.04],
                 projection="3d",
             )
-            norm, _ = _render_mesh(
-                ax, V, F, scalar, meta["cmap"], elev, azim,
-                vmin=g_vmin, vmax=g_vmax,
-            )
+
+            if is_rgb:
+                # data is already RGB array (n_vertices, 3)
+                _render_mesh(ax, V, F, vertex_colors=data,
+                             elev=elev, azim=azim)
+            else:
+                norm, _ = _render_mesh(
+                    ax, V, F, scalar=data, cmap_name=meta["cmap"],
+                    elev=elev, azim=azim,
+                    vmin=g_vmin, vmax=g_vmax,
+                )
 
             title_txt = (f"Mesh {mesh_label}  ·  {vname}"
                          if mesh_label else vname)
             ax.set_title(title_txt, color=accent_color,
                          fontsize=FS_PANEL, fontfamily="monospace", pad=3)
 
-        # Vertical separator between mesh groups (drawn after all views of
-        # mesh A are placed, before mesh B begins).
+        # Vertical separator between mesh groups
         if n_mesh > 1 and m_idx < n_mesh - 1:
             sep_x = left_pad + (m_idx + 1) * n_views * col_w
             fig.add_artist(
@@ -357,12 +375,12 @@ def save_descriptor_figure(
             alpha=0.90,
         )
 
-    # Colourbar centred vertically over the panel area
-    cbar_left   = plot_right + 0.015
-    cbar_bottom = footer_frac + note_frac + 0.03
-    cbar_height = panel_area - 0.06
-    _add_colourbar(fig, norm, meta["cmap"],
-                   rect=(cbar_left, cbar_bottom, 0.025, cbar_height))
+    if not is_rgb:
+        cbar_left   = plot_right + 0.015
+        cbar_bottom = footer_frac + note_frac + 0.03
+        cbar_height = panel_area - 0.06
+        _add_colourbar(fig, norm, meta["cmap"],
+                       rect=(cbar_left, cbar_bottom, 0.025, cbar_height))
 
     n_vs = [V.shape[0] for V, _, _ in meshes]
     n_fs = [F.shape[0] for _, F, _ in meshes]
@@ -388,7 +406,6 @@ def save_laplace_figure(
     eig_ids = [1, 2]           # φ₂, φ₃
     n_views = len(views)
 
-    # Columns per mesh group: one column per (eigenvector × view) combination.
     cols_per_mesh = len(eig_ids) * n_views
     n_total_cols  = n_mesh * cols_per_mesh
 
@@ -406,8 +423,7 @@ def save_laplace_figure(
     note_frac   = 0.06 if n_mesh > 1 else 0.0
     panel_area  = 1.0 - header_frac - footer_frac - note_frac
 
-    cbar_frac  = cbar_w_in / fig_w
-    plot_right = 1.0 - cbar_frac - 0.01
+    plot_right = 1.0 - (cbar_w_in / fig_w) - 0.01
     left_pad   = 0.01
     col_w      = (plot_right - left_pad) / n_total_cols
     row_bottom = footer_frac + note_frac
@@ -423,7 +439,7 @@ def save_laplace_figure(
         local_col = 0
         for eid in eig_ids:
             scalar = evecs[:, eid]
-            lim_v  = np.abs(scalar).max()   # symmetric colourbar for eigenvecs
+            lim_v  = np.abs(scalar).max()
 
             for vname, (elev, azim) in views:
                 col_idx = m_idx * cols_per_mesh + local_col
@@ -435,7 +451,8 @@ def save_laplace_figure(
                     projection="3d",
                 )
                 norm_last, _ = _render_mesh(
-                    ax, V, F, scalar, meta["cmap"], elev, azim,
+                    ax, V, F, scalar=scalar, cmap_name=meta["cmap"],
+                    elev=elev, azim=azim,
                     vmin=-lim_v, vmax=lim_v,
                 )
 
@@ -450,7 +467,6 @@ def save_laplace_figure(
                 )
                 local_col += 1
 
-        # Vertical separator between mesh groups
         if n_mesh > 1 and m_idx < n_mesh - 1:
             sep_x = left_pad + (m_idx + 1) * cols_per_mesh * col_w
             fig.add_artist(
@@ -491,30 +507,17 @@ def save_laplace_figure(
 
 
 # ── conclusionary summary figure ───────────────────────────────────────────────
-#
-# Each per-descriptor PNG (which is now wide/landscape) is shown as one row,
-# stacked top-to-bottom.  A conclusion box sits at the bottom.
-# Target: roughly square overall figure.
-#
 def save_summary_figure(image_paths, mesh_names, n_mesh, outdir):
-    """
-    Compose all per-descriptor PNG panels into one tall summary figure.
-    Each source image occupies one row (displayed at full width).
-    """
     import matplotlib.image as mpimg
 
     n_rows = len(image_paths)
     imgs   = [mpimg.imread(p) for p in image_paths]
 
-    # Derive figure width from the widest source image's aspect ratio,
-    # then size each row's height to match that ratio.
-    # Cap the total image area so the figure stays roughly square.
     fig_w     = 18.0 
     max_ar    = max(img.shape[1] / img.shape[0] for img in imgs)
     row_h_in  = fig_w / max_ar
-    margin_in = 2.8    # inches for title + conclusion box
+    margin_in = 2.8
 
-    # Don't let the rows alone exceed fig_w (square cap)
     max_img_h = fig_w - margin_in
     if row_h_in * n_rows > max_img_h:
         row_h_in = max_img_h / n_rows
@@ -522,7 +525,6 @@ def save_summary_figure(image_paths, mesh_names, n_mesh, outdir):
     fig_h = row_h_in * n_rows + margin_in
     fig   = plt.figure(figsize=(fig_w, fig_h), facecolor=BG)
 
-    # ── title ─────────────────────────────────────────────────────────────────
     title = "Spectral Geometry Descriptors (Summary)"
     if n_mesh == 2:
         title += f"\n(Isometric Invariance:  {mesh_names[0]}   vs   {mesh_names[1]})"
@@ -531,7 +533,6 @@ def save_summary_figure(image_paths, mesh_names, n_mesh, outdir):
              color=ACCENT, fontsize=FS_SUM_TTL, fontweight="bold",
              fontfamily="monospace")
 
-    # ── image rows ────────────────────────────────────────────────────────────
     top_pad    = 0.04
     bot_pad    = margin_in / fig_h
     usable_h   = 1.0 - top_pad - bot_pad
@@ -542,34 +543,6 @@ def save_summary_figure(image_paths, mesh_names, n_mesh, outdir):
         ax = fig.add_axes([0.0, bottom, 1.0, row_h_frac])
         ax.imshow(img, aspect="auto", interpolation="bilinear")
         ax.set_axis_off()
-
-    # ── conclusion box ────────────────────────────────────────────────────────
-    # conclusion = textwrap.dedent("""\
-    #     KEY CONCLUSIONS
-    #     Isometric Invariance: The LB operator and all descriptors are intrinsic (geodesic-only).  Identical colour patterns on Mesh A & B confirm this.
-    #     Laplace Eigenvectors: Low-frequency modes give a canonical, pose-invariant coordinate system; foundational for spectral mesh processing.
-    #     HKS:  Multi-scale heat diffusion fingerprint.  Stable & easy to compute; scale-dependent.  Best for coarse shape matching.
-    #     SI-HKS: HKS normalised by λ₁; removes global scale.  Retains multi-scale sensitivity for cross-shape comparison.
-    #     WKS: Quantum particle localisation model.  Finer frequency resolution than HKS; better at discriminating locally similar regions.
-    # """)
-
-    # box_bottom = 0.006
-    # box_height = bot_pad - 0.014
-    # fig.patches.extend([
-    #     matplotlib.patches.FancyBboxPatch(
-    #         (0.02, box_bottom), 0.96, box_height,
-    #         boxstyle="round,pad=0.005",
-    #         linewidth=1, edgecolor="#22263a", facecolor="#12151e",
-    #         transform=fig.transFigure, clip_on=False, zorder=3,
-    #     )
-    # ])
-    # fig.text(
-    #     0.04, box_bottom + box_height - 0.005,
-    #     conclusion,
-    #     ha="left", va="top",
-    #     color=TEXT, fontsize=FS_SUM_TXT, fontfamily="monospace",
-    #     linespacing=1.5, zorder=4,
-    # )
 
     out = os.path.join(outdir, "summary.png")
     fig.savefig(out, dpi=180, bbox_inches="tight",
@@ -584,6 +557,30 @@ def _load_mesh(path):
     V    = np.array(mesh.vertices, dtype=np.float64)
     F    = np.array(mesh.faces,    dtype=np.int32)
     return V, F
+
+
+# ── RGB conversion for sihks_norm ─────────────────────────────────────────────
+def _sihks_norm_to_rgb(hks_si):
+    """
+    Convert a 2D descriptor (n_vertices × n_times) to RGB using the first 3 time points.
+    Each channel is normalised independently to [0,1] across vertices.
+    """
+    # Take first 3 time points (or pad with zeros if fewer)
+    n_times = hks_si.shape[1]
+    if n_times < 3:
+        # Pad with zeros
+        pad = 3 - n_times
+        hks_si = np.pad(hks_si, ((0,0), (0,pad)), constant_values=0)
+    rgb = hks_si[:, :3].copy()
+    # Normalise each channel to [0,1] (per‑channel min‑max)
+    for c in range(3):
+        ch = rgb[:, c]
+        minc, maxc = ch.min(), ch.max()
+        if maxc > minc:
+            rgb[:, c] = (ch - minc) / (maxc - minc)
+        else:
+            rgb[:, c] = 0.5
+    return rgb
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -610,9 +607,9 @@ def main():
     )
     parser.add_argument(
         "--descriptors", nargs="+",
-        choices=["hks", "sihks", "wks"],
-        default=["hks", "sihks", "wks"],
-        help="Descriptors to render  (default: all three)",
+        choices=["hks", "sihks", "sihks_norm", "wks"],
+        default=["hks", "sihks", "sihks_norm", "wks"],
+        help="Descriptors to render  (default: all four)",
     )
     args = parser.parse_args()
 
@@ -644,8 +641,11 @@ def main():
     all_evals, all_evecs = [], []
     for i, (V, F) in enumerate(zip(all_V, all_F)):
         print(f"\n[eigen] Mesh {chr(65+i)} computing {args.k} eigenpairs …")
-        evals, evecs = _laplace_eigenpairs(V, F, args.k)
-        all_evals.append(evals); all_evecs.append(evecs)
+        evals, evecs = laplace_beltrami_eigenvalues(
+            (V, F), k=args.k, return_eigenvectors=True
+        )
+        all_evals.append(evals)
+        all_evecs.append(evecs)
         print(f"        λ₁ = {evals[1]:.6f}   λ_max = {evals[-1]:.4f}")
 
     saved_paths = []
@@ -658,13 +658,28 @@ def main():
     print(f"          saved to {os.path.basename(p)}")
 
     # ── descriptor figures ─────────────────────────────────────────────────────
-    SCALAR_FNS = {"hks": _hks, "sihks": _sihks, "wks": _wks}
+    SCALAR_FNS = {
+        "hks": compute_hks,
+        "sihks": compute_scale_invariant_hks,
+        "sihks_norm": compute_sihks_norm,
+        "wks": compute_wks
+    }
     for key in args.descriptors:
         print(f"\n[render]  {DESCRIPTORS[key]['label']} …")
         mesh_tuples = []
         for i in range(n_mesh):
-            scalar = SCALAR_FNS[key](all_evals[i], all_evecs[i])
-            mesh_tuples.append((all_V[i], all_F[i], scalar))
+            raw = SCALAR_FNS[key](all_evals[i], all_evecs[i])
+            # Some functions return a tuple; extract the array
+            if isinstance(raw, tuple):
+                raw = raw[0]
+            if key == "sihks_norm":
+                # raw is (n_vertices, n_times) – convert to RGB using first 3 time points
+                rgb = _sihks_norm_to_rgb(raw)
+                mesh_tuples.append((all_V[i], all_F[i], rgb))
+            else:
+                # For other descriptors, reduce to 1D if needed
+                data = _to_1d(raw)
+                mesh_tuples.append((all_V[i], all_F[i], data))
         p = save_descriptor_figure(
             meshes=mesh_tuples,
             meta=DESCRIPTORS[key],
