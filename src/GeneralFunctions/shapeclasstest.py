@@ -33,7 +33,7 @@ from modern.averageMixingKernelSignature import compute_amks
 DATA_DIR       = "././data/SHREC2011/"
 MESH_CACHE     = "shrec_meshes_shrec11.pkl"
 GT_FILE        = "././data/SHREC2011/test.cla"
-K_EVALS        = 200
+K_EVALS        = 100
 OUT_DIR        = "benchmark_outputs"
 THUMB_SIZE     = 120      # px per thumbnail in scatter
 TSNE_PERP      = 40
@@ -362,6 +362,92 @@ def evaluate(descriptors_dict, names, gt):
         p10s.append(precision_at_k(qname, ranked, gt))
     return float(np.mean(aps)), float(np.mean(p10s))
 
+
+def zoom_on_cluster(names, gt, meshes, class_names=None, t_sne_coords=None,
+                    bounding_box=None, n_max=30, out_path="zoom_cluster.png",
+                    thumb_size=200, cols=5):
+
+    # Create a grid of larger mesh thumbnails for a specific cluster.
+
+    # ---- 1. Select meshes ----
+    selected = []
+    for name in names:
+        if name not in gt or name not in meshes:
+            continue
+        if class_names is not None and gt[name] not in class_names:
+            continue
+        if bounding_box is not None and t_sne_coords is not None:
+            x, y = t_sne_coords[names.index(name)]
+            xmin, xmax, ymin, ymax = bounding_box
+            if not (xmin <= x <= xmax and ymin <= y <= ymax):
+                continue
+        selected.append(name)
+
+    if len(selected) > n_max:
+        # Optionally, sample randomly or pick the first n_max
+        rng = np.random.default_rng(42)
+        selected = rng.choice(selected, n_max, replace=False).tolist()
+
+    if not selected:
+        print("No meshes matched the selection criteria.")
+        return
+
+    # ---- 2. Prepare class colors (same as in your cluster plot) ----
+    classes = sorted(set(gt.values()))
+    cmap = plt.cm.get_cmap('tab20', len(classes))
+    class_color = {c: cmap(i) for i, c in enumerate(classes)}
+
+    # ---- 3. Create grid layout ----
+    n = len(selected)
+    rows = int(np.ceil(n / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 2.5, rows * 2.5),
+                             squeeze=False)
+    fig.patch.set_facecolor('white')
+
+    # ---- 4. Place each mesh thumbnail ----
+    for idx, name in enumerate(selected):
+        ax = axes[idx // cols, idx % cols]
+        ax.set_axis_off()
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+
+        cls = gt[name]
+        color = class_color[cls]
+
+        # Render the mesh thumbnail
+        V, F = meshes[name]['V'], meshes[name]['F']
+        try:
+            thumb = render_mesh_thumbnail(V, F, size=thumb_size)
+        except Exception as e:
+            print(f"  Render failed for {name}: {e}")
+            thumb = np.ones((thumb_size, thumb_size, 4), dtype=np.uint8) * 240
+            thumb[:, :, 3] = 255
+
+        # Show thumbnail with a colored border
+        im = OffsetImage(thumb, zoom=1.0)
+        ab = AnnotationBbox(
+            im, (0.5, 0.5), frameon=True,
+            bboxprops=dict(edgecolor=color, linewidth=3,
+                           facecolor='white', boxstyle='round,pad=0.05'),
+            xycoords='axes fraction', box_alignment=(0.5, 0.5)
+        )
+        ax.add_artist(ab)
+
+        # Optional: add class label below each image
+        ax.text(0.5, -0.05, cls, transform=ax.transAxes,
+                ha='center', va='top', fontsize=8, color='#333')
+
+    # ---- 5. Remove empty subplots ----
+    for j in range(idx + 1, rows * cols):
+        axes[j // cols, j % cols].axis('off')
+
+    plt.suptitle(f"Zoom on Cluster: {', '.join(class_names) if class_names else 'Selected region'}",
+                 fontsize=14, fontweight='bold', y=0.98)
+    plt.tight_layout()
+    fig.savefig(out_path, dpi=200, bbox_inches='tight', facecolor='white')
+    plt.close(fig)
+    print(f"Zoomed cluster view saved → {out_path}")
+
 # ── descriptor pipelines ───────────────────────────────────────────────────────
 def get_evals_evecs(mesh, k=K_EVALS):
     return laplace_beltrami_eigenvalues(mesh, k=k, return_eigenvectors=True,
@@ -484,7 +570,7 @@ def main():
             out_path=out_png,
         )
 
-        # Points-only cluster plot (new)
+        # Points-only cluster plot
         out_pts = os.path.join(OUT_DIR, f"cluster_{desc_name.lower()}_points.png")
         plot_cluster_points(
             descriptors=[desc_dict[n] for n in valid_names],
@@ -494,6 +580,17 @@ def main():
             out_path=out_pts,
             n_sample= 542
         )
+
+        # After running plot_cluster for ShapeDNA
+        # zoom_on_cluster(
+        #     names=valid_names,                 # the same list used for t‑SNE
+        #     gt=gt,
+        #     meshes=meshes,
+        #     class_names=['gorilla'],             # single class or list of classes
+        #     out_path=os.path.join(OUT_DIR, "zoom_human_class.png"),
+        #     thumb_size=200,
+        #     cols=5
+        # )
 
     # ── runtime table ──────────────────────────────────────────────────────────
     print("\n\n" + "="*65)
