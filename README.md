@@ -9,7 +9,7 @@ This repository contains the reference implementation and supporting code for th
 
 The work surveys, implements, and evaluates spectral shape descriptors based on the Laplace–Beltrami operator and its discretizations. It includes:
 - Computation of Laplace–Beltrami eigenpairs on triangle meshes  
-- The **Heat Kernel Signature (HKS)** and its **Scale‑Invariant** variant (SI‑HKS)  
+- The **Heat Kernel Signature (HKS)** and its **Scale‑Invariant** variant **(SIHKS)**  
 - The **Wave Kernel Signature (WKS)**  
 - Shape retrieval experiments on the SHREC 2011 benchmark  
 - Visualisations using t‑SNE and spectral clustering
